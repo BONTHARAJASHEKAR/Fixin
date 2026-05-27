@@ -1,0 +1,78 @@
+{
+  "summary": "End-to-end backend + frontend smoke testing of Leomote. 16/17 backend pytest cases passing (1 intermittent LLM-budget 500 on /api/ai/keywords). All major frontend routes load with data-testid hooks; signup -> dashboard -> protected pages all work; admin login + overview + KPI render. Two minor data-testid naming mismatches found vs spec.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/ai/* (keywords/rewrite/interview)",
+        "issue": "When Emergent LLM budget is exhausted or LLM call fails, endpoints return 500 (unhandled emergentintegrations.ChatError). Should be wrapped in try/except and return 502/503 with friendly message.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/dashboard/summary",
+        "issue": "Returns flattened quota fields (ats_quota/ai_quota/ats_used/ai_used) instead of nested 'quotas' object as documented in the review request. Consumers must be aware of the flat shape."
+      },
+      {
+        "endpoint": "/api/admin/overview",
+        "issue": "months[] series duplicates 'Jan' multiple times because the loop uses `now - i*30 days` instead of true month boundaries; causes React duplicate-key warnings on admin charts."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AdminMisc - Subscriptions page",
+        "issue": "Wrapper uses data-testid='admin-subs-page' but spec/route lookup expects 'admin-subscriptions-page'.",
+        "selector": "[data-testid='admin-subs-page']",
+        "priority": "LOW"
+      },
+      {
+        "component": "AdminMisc - Notifications page",
+        "issue": "Wrapper uses data-testid='admin-notif-page' instead of 'admin-notifications-page'.",
+        "selector": "[data-testid='admin-notif-page']",
+        "priority": "LOW"
+      },
+      {
+        "component": "Pricing page plan cards",
+        "issue": "Cards use data-testid='plan-{id}' but request mentions 'plan-card-{id}'. subscribe-{id} buttons work fine.",
+        "selector": "[data-testid='plan-premium']",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Admin charts rendering",
+        "issue": "Console error: 'Encountered two children with the same key, Jan' — caused by backend overview months[] containing duplicate 'Jan' (see admin overview bug above).",
+        "affected_selectors": ["[data-testid='admin-overview']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_leomote.py",
+    "/app/test_reports/pytest/leomote_results.xml"
+  ],
+  "action_items": [
+    "Wrap LLM calls in routes_ai.py / ai_service.py with try/except and return 502/503 instead of 500 when emergentintegrations raises ChatError (covers budget exceeded and transient LLM errors).",
+    "Fix /api/admin/overview month-bucketing to use proper calendar months so labels are unique (currently month_start = now - i*30 days, days=1 produces duplicate 'Jan' multiple times).",
+    "Rename admin-subs-page -> admin-subscriptions-page and admin-notif-page -> admin-notifications-page (or update spec/tests). Same for plan-{id} vs plan-card-{id}."
+  ],
+  "critical_code_review_comments": [
+    "routes_ai.py: every LLM endpoint trusts ai_service to succeed; any LLM exception bubbles up as 500. Add a shared wrapper so the UI gets actionable error messages.",
+    "routes_admin.py overview: month bucketing logic with i*30 days is incorrect for calendar months; produces duplicate month names and inaccurate growth/revenue series.",
+    "routes_payments.py verify_payment: amount is not re-verified against the order; a client could pass any plan in /verify body and get upgraded. Should look up the original payment doc by razorpay_order_id and use its plan/amount rather than trusting the request body.",
+    "routes_auth.py /session: cookie set with samesite='none' + secure=True is correct for cross-site but only works over HTTPS; preview URL is HTTPS so OK. Note that /auth/me only accepts Bearer JWT and ignores the session_token cookie, so OAuth users need the JWT issued by the /session response — already handled."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_leomote.py",
+    "/app/backend/tests/__init__.py"
+  ],
+  "success_rate": {"backend": "94% (16/17)", "frontend": "~92% (all critical flows + most testids)"},
+  "test_credentials": "Admin: admin@leomote.ai / Admin@2026 (seeded). Test users created on-the-fly via /api/auth/signup with TEST_ prefix.",
+  "seed_data_creation": "Test resumes, applications, payments, and users created with TEST_ prefix during run; not cleaned up to keep dashboards populated for next iteration.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite at /app/backend/tests/test_leomote.py is the regression suite — run with `cd /app/backend && python -m pytest tests/test_leomote.py -v`. The block_unblock_flow test changes the test user's is_blocked state, so always run as a full suite (fixtures are session-scoped). LLM-backed tests (ai_keywords/rewrite/interview/ats_analyze) can fail with 500 when the Emergent LLM key hits its $0.001 budget cap — retry after a few minutes if intermittent.",
+  "rca of the issue": "The /api/ai/keywords 500 traces to emergentintegrations.llm.chat.ChatError raised inside ai_service._ask when litellm returns BadRequestError 'Budget has been exceeded'. routes_ai.ai_keywords does not catch this exception so FastAPI returns a generic 500. Mitigation: wrap _ask (or each route handler) in try/except ChatError and raise HTTPException(status_code=503, detail='AI service temporarily unavailable')."
+}

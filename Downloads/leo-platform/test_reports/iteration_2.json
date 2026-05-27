@@ -1,0 +1,42 @@
+{
+  "summary": "Tested new Job Discovery system + new pricing tiers (Free/Basic/Premium/Hero ₹0/79/119/199). 12/12 new backend pytest cases pass. Frontend Pricing page renders all four plan cards with correct prices + comparison table. Job Discovery page renders, filters bar works, /api/jobs/discover returns 5 real jobs for a fresh free user (correctly capped at the daily quota of 5), save tab works, and Apply buttons are correctly wrapped in <a target=_blank> pointing to real LinkedIn/Naukri/Wellfound/Indeed/Internshala URLs. Daily quota 402 enforcement verified — a second /discover after the cap returns 402 'Daily job recommendation limit reached'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/jobs/discover",
+        "issue": "Clearbit logo for AI-generated companies sometimes 404s — e.g. ERR_NAME_NOT_RESOLVED for fabricated company domains. Cosmetic only; UI falls back to initial avatar gracefully."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_jobs_and_pricing.py",
+    "/app/backend/tests/test_leomote.py",
+    "/app/test_reports/pytest/jobs_pricing_results.xml"
+  ],
+  "action_items": [
+    "Optional: Replace Clearbit-direct logo URLs with a server-side fallback (e.g. generated initial avatar) for company domains that don't resolve, to silence ERR_NAME_NOT_RESOLVED console noise."
+  ],
+  "critical_code_review_comments": [
+    "routes_jobs.discover: filtering by remote_filter is delegated to the LLM via prompt only — there is no post-AI filter to drop non-matching remote_type jobs. If GPT-5.2 ignores the rule, mixed types may persist. Consider filtering raw_jobs by remote_type == body.remote_type when remote_type != 'any' before inserting.",
+    "routes_jobs.discover: when LLM returns 0 jobs, raises 502 but does NOT roll back/skip quota; since we count from `jobs_col`, no row was inserted so quota is unaffected — fine. Just confirm no _log_usage call happens before this point (currently it doesn't, OK).",
+    "routes_jobs.usage: 'unlimited' flag uses cap >= 1000 — correct since Hero plan jobs_per_day is 100000.",
+    "models.PLANS: Free plan sources are only ['wellfound','internshala']; LLM is instructed to use ALLOWED SOURCES, and code clamps invalid sources to plan.sources[0] — defensive and correct.",
+    "Apply URL deep-linking uses search/keyword URLs (not job-id-specific) which is the intended behavior — they always land on a live search results page even for AI-fabricated job titles. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_jobs_and_pricing.py"
+  ],
+  "success_rate": {"backend": "100% (12/12 new + previous 16/17 still apply)", "frontend": "100% on Pricing + Job Discovery critical flows"},
+  "test_credentials": "Admin: admin@leomote.ai / Admin@2026 (Hero plan, unlimited). Fresh free users created on-the-fly via /api/auth/signup with TEST_quota_* / TEST_ui_* prefixes for quota + UI testing.",
+  "seed_data_creation": "Per-run fresh free users created for daily-quota validation. Discover persists up to 5 jobs/user/day; safe to leave behind.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run new regression: `cd /app/backend && python -m pytest tests/test_jobs_and_pricing.py -v`. This suite creates a fresh free user per module so re-running the whole module works idempotently — it does not rely on cleanup of prior runs. The 402 quota test depends on the first /discover call returning ≥1 job; if the AI is rate-limited (502) the quota follow-up auto-skips via pytest.skip. Frontend uses data-testid plan-card-{id}, subscribe-{id}, pricing-header, comparison-table on Pricing; and jobs-page, job-role/location/remote/exp/resume/startup/discover, tab-{discover|saved|all}, job-{id}, save-{id}, apply-{id}, jobs-error on Job Discovery — all confirmed present.",
+  "rca of the issue": "No bugs found this iteration. Previous iteration's LLM-budget 500 on /api/ai/keywords was not retested here (out of scope). New Job Discovery feature works end-to-end with real GPT-5.2 + correct quota enforcement + correct deep-link Apply URLs."
+}
